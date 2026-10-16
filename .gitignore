@@ -1,0 +1,17 @@
+.env
+.env.*.local
+!.env.example
+.codex-go-cache/
+.codex-go-tmp/
+api.exe
+*.exe
+*.test
+*.out
+/bin/
+**/node_modules/
+**/.next/
+**/dist/
+**/coverage/
+**/.turbo/
+**/.cache/
+*.log
