@@ -299,6 +299,7 @@ func main() {
 		(&adminapi.CollectionHTTP{Service: products, Events: events}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.PaymentCollectionHTTP{Orders: orders, Payments: payments, Links: links}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.PaymentHTTP{Service: payments}).Register(api, authHTTP.AdminMiddleware())
+		(&adminapi.SearchHTTP{Service: searchService}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.SearchIndexHTTP{Service: searchService}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.FulfillmentHTTP{Service: fulfillments, Locations: stockLocations, Links: links, Permissions: userRolesWorkflow{rbac: rbac, links: links, users: users}, RBACEnabled: rbacEnabled, Events: events}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.InventoryHTTP{Service: inventory, Links: productLinkAdapter{service: links}, Products: products, Events: events, Locks: locks, Permissions: userRolesWorkflow{rbac: rbac, links: links, users: users}, RBACEnabled: rbacEnabled}).Register(api, authHTTP.AdminMiddleware())
