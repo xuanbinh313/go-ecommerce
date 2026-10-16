@@ -343,11 +343,19 @@ func (p *Provider) Search(ctx context.Context, query models.ProviderSearchQuery)
 	if options["highlight"] != nil && strings.TrimSpace(query.Q) != "" {
 		return models.SearchResult{}, errors.New("the postgres search provider does not support highlighting")
 	}
-	if listLength(options["facets"]) > 0 {
-		return models.SearchResult{}, errors.New("search-postgres facet queries are not yet supported by this Go adapter")
+	distinct := ""
+	if value, exists := options["distinct"]; exists && value != nil {
+		var ok bool
+		distinct, ok = value.(string)
+		if !ok {
+			return models.SearchResult{}, errors.New("search_options.distinct must be a field name")
+		}
+	} else {
+		distinct, _ = query.Index.Settings["distinct_attribute"].(string)
 	}
-	if options["distinct"] != nil || query.Index.Settings["distinct_attribute"] != nil {
-		return models.SearchResult{}, errors.New("search-postgres distinct results are not yet supported by this Go adapter")
+	distinctExpr, err := distinctExpression(distinct, entry.Plan, query.Index.Name)
+	if err != nil {
+		return models.SearchResult{}, err
 	}
 	searchable := entry.Plan.Searchable
 	if rawAttrs := options["attributes_to_search_on"]; rawAttrs != nil {
@@ -404,6 +412,7 @@ func (p *Provider) Search(ctx context.Context, query models.ProviderSearchQuery)
 		whereSQL = " WHERE " + strings.Join(conditions, " AND ")
 	}
 	args := append(searchArgs, filterArgs...)
+	facetScopeArgs := append([]any(nil), args...)
 	skip, take := intOr(query.Pagination.Skip, 0), intOr(query.Pagination.Take, 20)
 	if skip < 0 || take < 0 {
 		return models.SearchResult{}, errors.New("search pagination values cannot be negative")
@@ -413,14 +422,21 @@ func (p *Provider) Search(ctx context.Context, query models.ProviderSearchQuery)
 		return models.SearchResult{}, err
 	}
 	minScore, hasMin := floatValue(options["min_score"])
-	base := `SELECT id,document,` + rank + ` AS score FROM ` + ident(entry.Table) + whereSQL
-	if hasMin {
+	base := `SELECT id,document,indexed,` + rank + ` AS score FROM ` + ident(entry.Table) + whereSQL
+	querySQL := `SELECT id,document,score FROM (` + base + `) ranked`
+	if distinctExpr != "" {
+		querySQL = `SELECT id,document,score FROM (SELECT base_rows.*,ROW_NUMBER() OVER (PARTITION BY ` + distinctExpr + ` ORDER BY ` + order + `) AS __rn FROM (` + base + `) base_rows) deduped WHERE __rn=1`
+		if hasMin {
+			args = append(args, minScore)
+			querySQL += ` AND score >= $` + strconv.Itoa(len(args))
+		}
+	} else if hasMin {
 		args = append(args, minScore)
-		base = `SELECT * FROM (` + base + `) ranked WHERE score >= $` + strconv.Itoa(len(args))
+		querySQL = `SELECT id,document,score FROM (` + base + `) ranked WHERE score >= $` + strconv.Itoa(len(args))
 	}
 	args = append(args, take, skip)
 	limitAt := len(args) - 1
-	rows, err := p.pool.Query(ctx, base+` ORDER BY `+order+` LIMIT $`+strconv.Itoa(limitAt)+` OFFSET $`+strconv.Itoa(limitAt+1), args...)
+	rows, err := p.pool.Query(ctx, querySQL+` ORDER BY `+order+` LIMIT $`+strconv.Itoa(limitAt)+` OFFSET $`+strconv.Itoa(limitAt+1), args...)
 	if err != nil {
 		return models.SearchResult{}, err
 	}
@@ -454,7 +470,13 @@ func (p *Provider) Search(ctx context.Context, query models.ProviderSearchQuery)
 		countArgs := append([]any{}, searchArgs...)
 		countArgs = append(countArgs, filterArgs...)
 		countSQL := `SELECT COUNT(*) FROM ` + ident(entry.Table) + whereSQL
-		if hasMin {
+		if distinctExpr != "" {
+			countSQL = `SELECT COUNT(*) FROM (SELECT ROW_NUMBER() OVER (PARTITION BY ` + distinctExpr + ` ORDER BY ` + order + `) AS __rn,score FROM (` + base + `) base_rows) deduped WHERE __rn=1`
+			if hasMin {
+				countArgs = append(countArgs, minScore)
+				countSQL += ` AND score >= $` + strconv.Itoa(len(countArgs))
+			}
+		} else if hasMin {
 			countArgs = append(countArgs, minScore)
 			countSQL = `SELECT COUNT(*) FROM (SELECT ` + rank + ` AS score FROM ` + ident(entry.Table) + whereSQL + `) ranked WHERE score >= $` + strconv.Itoa(len(countArgs))
 		}
@@ -464,8 +486,12 @@ func (p *Provider) Search(ctx context.Context, query models.ProviderSearchQuery)
 		}
 		count = &n
 	}
+	facets, err := p.resolveFacets(ctx, entry.Table, entry.Plan, options["facets"], whereSQL, facetScopeArgs)
+	if err != nil {
+		return models.SearchResult{}, err
+	}
 	ms := float64(time.Since(started).Microseconds()) / 1000
-	return models.SearchResult{Hits: hits, Metadata: models.ResultMetadata{Skip: skip, Take: take, Count: count, Query: query.Q, ProcessingTimeMS: &ms}}, nil
+	return models.SearchResult{Hits: hits, Facets: facets, Metadata: models.ResultMetadata{Skip: skip, Take: take, Count: count, Query: query.Q, ProcessingTimeMS: &ms}}, nil
 }
 func (p *Provider) SearchMany(ctx context.Context, queries []models.ProviderSearchQuery) ([]models.SearchResult, error) {
 	if len(queries) == 0 {

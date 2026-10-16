@@ -567,6 +567,20 @@ func searchOrder(order map[string]string, plan indexPlan, hasScore bool) (string
 	return strings.Join(parts, ","), nil
 }
 
+func distinctExpression(field string, plan indexPlan, indexName string) (string, error) {
+	if field == "" {
+		return "", nil
+	}
+	planned, ok := plan.Fields[field]
+	if !ok {
+		return "", fmt.Errorf("cannot deduplicate search index %q by unknown field %q", indexName, field)
+	}
+	if planned.Array {
+		return "", fmt.Errorf("the postgres search provider cannot deduplicate by %q", field)
+	}
+	return jsonPath(field, true), nil
+}
+
 type facetRequest struct {
 	field  string
 	typeID string
