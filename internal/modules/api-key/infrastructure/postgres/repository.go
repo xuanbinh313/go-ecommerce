@@ -95,6 +95,18 @@ func (r *Repository) Get(ctx context.Context, id string) (models.APIKey, error) 
 	}
 	return v, rows.Err()
 }
+
+func (r *Repository) GetPublishableKeyByToken(ctx context.Context, token string) (models.APIKey, error) {
+	var id string
+	err := r.db.QueryRow(ctx, `SELECT id FROM api_key WHERE token=$1 AND type='publishable' AND deleted_at IS NULL AND (revoked_at IS NULL OR revoked_at > now())`, token).Scan(&id)
+	if err == pgx.ErrNoRows {
+		return models.APIKey{}, nil
+	}
+	if err != nil {
+		return models.APIKey{}, err
+	}
+	return r.Get(ctx, id)
+}
 func (r *Repository) Create(ctx context.Context, v models.APIKey) (models.APIKey, error) {
 	return scanKey(r.db.QueryRow(ctx, `INSERT INTO api_key(id,title,token,salt,redacted,type,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING `+keyColumns, v.ID, v.Title, v.Token, v.Salt, v.Redacted, v.Type, v.CreatedBy))
 }

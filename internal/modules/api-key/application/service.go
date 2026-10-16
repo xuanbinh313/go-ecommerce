@@ -23,6 +23,23 @@ func (s *Service) Get(ctx context.Context, id string) (models.APIKey, error) {
 	return s.repository.Get(ctx, id)
 }
 
+// PublishableKeySalesChannels returns the sales-channel scope associated with
+// a source-compatible x-publishable-api-key header.
+func (s *Service) PublishableKeySalesChannels(ctx context.Context, token string) ([]string, error) {
+	if token == "" {
+		return []string{}, nil
+	}
+	key, err := s.repository.GetPublishableKeyByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(key.SalesChannels))
+	for _, channel := range key.SalesChannels {
+		ids = append(ids, channel.ID)
+	}
+	return ids, nil
+}
+
 func (s *Service) Create(ctx context.Context, in models.CreateInput) (models.Created, error) {
 	if in.Title == "" || (in.Type != "publishable" && in.Type != "secret") {
 		return models.Created{}, fmt.Errorf("title and valid type are required")

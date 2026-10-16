@@ -8,6 +8,7 @@ import (
 type Repository interface {
 	List(context.Context, models.Filter) ([]models.APIKey, int, error)
 	Get(context.Context, string) (models.APIKey, error)
+	GetPublishableKeyByToken(context.Context, string) (models.APIKey, error)
 	Create(context.Context, models.APIKey) (models.APIKey, error)
 	Update(context.Context, string, models.UpdateInput) error
 	Revoke(context.Context, string, models.RevokeInput) error
