@@ -88,6 +88,9 @@ import (
 	saleschannelapp "github.com/example/medusa-go-clone/internal/modules/sales-channel/application"
 	saleschannelmodels "github.com/example/medusa-go-clone/internal/modules/sales-channel/domain/models"
 	saleschannelpostgres "github.com/example/medusa-go-clone/internal/modules/sales-channel/infrastructure/postgres"
+	searchapp "github.com/example/medusa-go-clone/internal/modules/search/application"
+	searchdomain "github.com/example/medusa-go-clone/internal/modules/search/domain"
+	searchpostgres "github.com/example/medusa-go-clone/internal/modules/search/infrastructure/postgres"
 	settingsapp "github.com/example/medusa-go-clone/internal/modules/settings/application"
 	settingspostgres "github.com/example/medusa-go-clone/internal/modules/settings/infrastructure/postgres"
 	stocklocationapp "github.com/example/medusa-go-clone/internal/modules/stock-location/application"
@@ -103,6 +106,7 @@ import (
 	userpostgres "github.com/example/medusa-go-clone/internal/modules/user/infrastructure/postgres"
 	usersecurity "github.com/example/medusa-go-clone/internal/modules/user/infrastructure/security"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -187,6 +191,7 @@ func main() {
 	carts := cartapp.NewService(cartpostgres.NewRepository(db), regionpostgres.NewRepository(db), storepostgres.NewRepository(db), saleschannelpostgres.NewRepository(db))
 	taxes := taxapp.NewService(taxpostgres.NewRepository(db))
 	translations := translationapp.NewService(translationpostgres.NewRepository(db))
+	searchService := configuredSearchService(db)
 	fileProviderID := strings.ToLower(env("FILE_PROVIDER", "local"))
 	var fileProvider filedomain.Provider
 	switch fileProviderID {
@@ -288,7 +293,7 @@ func main() {
 		(&adminapi.CollectionHTTP{Service: products, Events: events}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.PaymentCollectionHTTP{Orders: orders, Payments: payments, Links: links}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.PaymentHTTP{Service: payments}).Register(api, authHTTP.AdminMiddleware())
-		(&adminapi.SearchIndexHTTP{}).Register(api, authHTTP.AdminMiddleware())
+		(&adminapi.SearchIndexHTTP{Service: searchService}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.FulfillmentHTTP{Service: fulfillments, Locations: stockLocations, Links: links, Permissions: userRolesWorkflow{rbac: rbac, links: links, users: users}, RBACEnabled: rbacEnabled, Events: events}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.InventoryHTTP{Service: inventory, Links: productLinkAdapter{service: links}, Products: products, Events: events, Locks: locks, Permissions: userRolesWorkflow{rbac: rbac, links: links, users: users}, RBACEnabled: rbacEnabled}).Register(api, authHTTP.AdminMiddleware())
 		(&adminapi.PricingHTTP{Service: pricing}).Register(api, authHTTP.AdminMiddleware())
@@ -316,6 +321,48 @@ func main() {
 	if err := router.Run(addr); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// configuredSearchService reads the JSON form of Medusa's Search module
+// options. Empty configuration leaves the optional module disabled.
+func configuredSearchService(db *pgxpool.Pool) *searchapp.Service {
+	raw := strings.TrimSpace(os.Getenv("SEARCH_MODULE_OPTIONS"))
+	if raw == "" {
+		return nil
+	}
+	var options searchapp.ModuleOptions
+	if err := json.Unmarshal([]byte(raw), &options); err != nil {
+		log.Fatalf("invalid SEARCH_MODULE_OPTIONS: %v", err)
+	}
+	var language string
+	var searchProviders []searchdomain.SearchProvider
+	for _, configured := range options.Providers {
+		if !strings.Contains(configured.Resolve, "search-postgres") {
+			log.Fatalf("unsupported Search provider %q (only search-postgres is implemented)", configured.Resolve)
+		}
+		if value, ok := configured.Options["language"].(string); ok {
+			language = value
+		}
+		if engine, ok := configured.Options["engine"].(string); ok && engine != "native" {
+			log.Fatalf("unsupported search-postgres engine %q", engine)
+		}
+		provider, err := searchpostgres.NewProvider(db, language)
+		if err != nil {
+			log.Fatal(err)
+		}
+		searchProviders = append(searchProviders, provider)
+	}
+	providers, err := searchapp.NewProviderRegistry(searchProviders...)
+	if err != nil {
+		log.Fatal(err)
+	}
+	definitions, err := searchapp.ResolveIndexDefinitions(options, providers)
+	if err != nil {
+		log.Fatalf("invalid SEARCH_MODULE_OPTIONS indexes: %v", err)
+	}
+	repository := searchpostgres.NewRepository(db)
+	resolver := searchapp.NewConfiguredIndexResolver(repository, definitions)
+	return searchapp.NewService(providers, resolver, repository)
 }
 
 type promotionRuleOptions struct {
