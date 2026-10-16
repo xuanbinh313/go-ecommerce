@@ -192,6 +192,12 @@ func main() {
 	taxes := taxapp.NewService(taxpostgres.NewRepository(db))
 	translations := translationapp.NewService(translationpostgres.NewRepository(db))
 	searchService := configuredSearchService(db)
+	storeSearchAllowlist := map[string]storeapi.StoreSearchIndexConfig{}
+	if raw := strings.TrimSpace(os.Getenv("SEARCH_STORE_ALLOWLIST")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &storeSearchAllowlist); err != nil {
+			log.Fatalf("invalid SEARCH_STORE_ALLOWLIST: %v", err)
+		}
+	}
 	fileProviderID := strings.ToLower(env("FILE_PROVIDER", "local"))
 	var fileProvider filedomain.Provider
 	switch fileProviderID {
@@ -313,7 +319,7 @@ func main() {
 		(&storeapi.PaymentProviderHTTP{Links: links, Payments: payments}).Register(api)
 		(&storeapi.OrderHTTP{Service: orders, RequireActor: authHTTP.AuthMiddleware(false)}).Register(api)
 		(&storeapi.ReturnReasonHTTP{Service: orders}).Register(api)
-		(&storeapi.SearchHTTP{}).Register(api, authHTTP.AuthMiddleware(true))
+		(&storeapi.SearchHTTP{Service: searchService, APIKeys: apiKeys, Allowlist: storeSearchAllowlist}).Register(api, authHTTP.AuthMiddleware(true))
 	}
 	registerAPI(router.Group(""))
 	registerAPI(router.Group("/api/v1"))

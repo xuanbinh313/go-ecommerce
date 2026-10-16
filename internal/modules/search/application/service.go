@@ -35,6 +35,13 @@ func (s *Service) ListIndexes(ctx context.Context) ([]models.SearchIndexDetails,
 	}
 	return nil, fmt.Errorf("search index resolver does not support listing indexes")
 }
+
+// GetIndexDefinition returns the process-owned definition used to validate
+// Store selections and apply visibility filters.
+func (s *Service) GetIndexDefinition(name string) (models.IndexDefinition, error) {
+	return s.indexes.GetDefinition(name)
+}
+
 func (s *Service) SearchMany(ctx context.Context, queries []models.SearchQuery) ([]models.SearchResult, error) {
 	if len(queries) == 0 {
 		return []models.SearchResult{}, nil

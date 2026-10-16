@@ -31,6 +31,7 @@ type ProviderRegistry interface {
 }
 
 type IndexResolver interface {
+	GetDefinition(string) (models.IndexDefinition, error)
 	ResolveActiveDefinition(context.Context, string, bool) (models.IndexDefinition, error)
 }
 
